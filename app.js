@@ -189,11 +189,14 @@ async function handleAuth() {
 async function signInWithMicrosoft() {
   hideMessages();
   try {
+    // Use the directory the portal lives in, not just the origin.
+    // On GitHub Pages project sites the portal lives at /Orders/, not the domain root.
+    const redirectBase = window.location.origin + window.location.pathname.replace(/[^/]*$/, '');
     const { error } = await db.auth.signInWithOAuth({
       provider: 'azure',
       options: {
         scopes: 'email openid profile',
-        redirectTo: window.location.origin
+        redirectTo: redirectBase
       }
     });
     if (error) throw error;
