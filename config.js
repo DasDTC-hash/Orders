@@ -3,4 +3,4 @@
 // (Settings > API)
 
 const SUPABASE_URL = 'https://upvtxagpookvamdhxqeg.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVwdnR4YWdwb29rdmFtZGh4cWVnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg1MjQ2ODYsImV4cCI6MjA5NDEwMDY4Nn0.lTRAAKQJF56GwxhrfsA77b-tO1MseK1tmEpCwBTFuhM';
+const SUPABASE_ANON_KEY = 'sb_publishable_KStWsc97qz-72Sy8X2aUeg_183S2dzA';
