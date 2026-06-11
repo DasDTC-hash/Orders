@@ -189,14 +189,11 @@ async function handleAuth() {
 async function signInWithMicrosoft() {
   hideMessages();
   try {
-    // Use the directory the portal lives in, not just the origin.
-    // On GitHub Pages project sites the portal lives at /Orders/, not the domain root.
-    const redirectBase = window.location.origin + window.location.pathname.replace(/[^/]*$/, '');
     const { error } = await db.auth.signInWithOAuth({
       provider: 'azure',
       options: {
         scopes: 'email openid profile',
-        redirectTo: redirectBase
+        redirectTo: window.location.origin
       }
     });
     if (error) throw error;
@@ -223,6 +220,7 @@ async function showApp() {
   const displayEmail = currentUser.email || currentUser.user_metadata?.email || 'Signed in';
   document.getElementById('user-email').textContent = displayEmail;
   await loadTickets();
+  switchTab('board'); // open on the tiles view, not the form
 }
 
 // ============================================
@@ -310,16 +308,18 @@ async function toggleApproval(ticketId) {
 }
 
 async function toggleAcquired(itemId) {
-  let item;
+  let item, parent;
   for (const t of tickets) {
-    item = t.items.find(i => i.id === itemId);
-    if (item) break;
+    const found = t.items.find(i => i.id === itemId);
+    if (found) { item = found; parent = t; break; }
   }
   if (!item) return;
   const newVal = !item.acquired;
   item.acquired = newVal;
   renderBoard();
   await db.from('items').update({ acquired: newVal }).eq('id', itemId);
+  await syncTicketCompletion(parent);
+  renderBoard();
 }
 
 async function updateTracking(itemId, value) {
@@ -383,6 +383,7 @@ async function addItemToTicket(ticketId) {
     .single();
   if (error) { alert(error.message); return; }
   t.items.push(data);
+  await syncTicketCompletion(t);
   renderBoard();
 }
 
@@ -414,6 +415,7 @@ function toggleNotes(ticketId) {
 
 async function removeItem(itemId) {
   if (!confirm('Remove this item?')) return;
+  const parent = tickets.find(t => t.items.some(i => i.id === itemId));
   await db.from('items').delete().eq('id', itemId);
   for (const t of tickets) { t.items = t.items.filter(i => i.id !== itemId); }
   for (const t of tickets) {
@@ -424,6 +426,7 @@ async function removeItem(itemId) {
       }
     }
   }
+  await syncTicketCompletion(parent);
   renderBoard();
 }
 
@@ -440,10 +443,10 @@ async function deleteTicket(ticketId, skipConfirm) {
 // ============================================
 
 function switchTab(tab) {
-  document.getElementById('tab-form').classList.toggle('active', tab === 'form');
-  document.getElementById('tab-board').classList.toggle('active', tab === 'board');
   document.getElementById('form-panel').classList.toggle('active', tab === 'form');
   document.getElementById('board-panel').classList.toggle('active', tab === 'board');
+  const newBtn = document.getElementById('new-request-btn');
+  if (newBtn) newBtn.classList.toggle('active-view', tab === 'form');
 }
 
 function setFilter(filter, evt) {
@@ -465,17 +468,75 @@ function ticketStatus(t) {
   return 'progress';
 }
 
+// Timestamp of midnight on the 1st of the current month
+function startOfCurrentMonth() {
+  const n = new Date();
+  return new Date(n.getFullYear(), n.getMonth(), 1).getTime();
+}
+
+// A ticket is archived if it's fully complete AND was completed before this month.
+// Falls back to created_at for legacy tickets that have no completed_at stamp yet.
+function isArchived(t) {
+  if (ticketStatus(t) !== 'complete') return false;
+  const ref = t.completed_at || t.created_at;
+  if (!ref) return false;
+  return new Date(ref).getTime() < startOfCurrentMonth();
+}
+
+// Everything that should be searchable for a ticket: the full ticket title
+// (number + name + date), notes, item names, tracking numbers, and date strings.
+function ticketSearchBlob(t) {
+  const parts = [t.ticket_number || '', t.notes || ''];
+  (t.items || []).forEach(i => {
+    parts.push(i.name || '');
+    if (i.tracking_number) parts.push(i.tracking_number);
+  });
+  if (t.created_at) {
+    const d = new Date(t.created_at);
+    parts.push(d.toLocaleDateString()); // 6/1/2026
+    parts.push(d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })); // June 1, 2026
+  }
+  if (t.completed_at) {
+    parts.push(new Date(t.completed_at).toLocaleDateString());
+  }
+  return parts.join(' ').toLowerCase();
+}
+
+// Keep completed_at in sync when a ticket flips into / out of fully-complete.
+async function syncTicketCompletion(t) {
+  if (!t) return;
+  const complete = ticketStatus(t) === 'complete';
+  if (complete && !t.completed_at) {
+    const ts = new Date().toISOString();
+    t.completed_at = ts;
+    await db.from('tickets').update({ completed_at: ts }).eq('id', t.id);
+  } else if (!complete && t.completed_at) {
+    t.completed_at = null;
+    await db.from('tickets').update({ completed_at: null }).eq('id', t.id);
+  }
+}
+
 function renderBoard() {
   const tilesEl = document.getElementById('tiles');
   const emptyEl = document.getElementById('empty-state');
   const searchTerm = document.getElementById('search').value.toLowerCase().trim();
 
   const filtered = tickets.filter(t => {
-    if (searchTerm && !t.ticket_number.toLowerCase().includes(searchTerm)) return false;
-    if (currentFilter === 'pending' && t.approved) return false;
-    if (currentFilter === 'progress' && (!t.approved || ticketStatus(t) === 'complete')) return false;
-    if (currentFilter === 'complete' && ticketStatus(t) !== 'complete') return false;
-    return true;
+    // When searching, ignore the active sub-tab and match across ALL statuses
+    // and the full ticket field (number, name, date, notes, items, tracking).
+    if (searchTerm) {
+      return ticketSearchBlob(t).includes(searchTerm);
+    }
+    const status = ticketStatus(t);
+    const archived = isArchived(t);
+    switch (currentFilter) {
+      case 'pending':  return !t.approved && !archived;
+      case 'progress': return t.approved && status !== 'complete';
+      case 'complete': return status === 'complete' && !archived;
+      case 'archived': return archived;
+      case 'all':
+      default:         return !archived; // All hides archived (it has its own tab)
+    }
   });
 
   document.getElementById('tile-count').textContent = tickets.length;
@@ -483,8 +544,8 @@ function renderBoard() {
   if (filtered.length === 0) {
     emptyEl.style.display = 'block';
     emptyEl.querySelector('p').textContent = tickets.length === 0
-      ? 'No requests yet. Submit one from the New request tab.'
-      : 'No requests match your filters.';
+      ? 'No requests yet. Hit + New request to add one.'
+      : (searchTerm ? 'No tickets match your search.' : 'No requests in this view.');
     tilesEl.innerHTML = '';
     return;
   }
@@ -494,9 +555,13 @@ function renderBoard() {
     const total = t.items.length;
     const done = t.items.filter(i => i.acquired).length;
     const isComplete = total > 0 && done === total;
-    const statusClass = isComplete ? 'complete' : 'progress';
-    const statusLabel = isComplete ? 'Complete' : (done + '/' + total);
+    const archived = isArchived(t);
+    let statusClass, statusLabel;
+    if (archived) { statusClass = 'archived'; statusLabel = 'Archived'; }
+    else if (isComplete) { statusClass = 'complete'; statusLabel = 'Complete'; }
+    else { statusClass = 'progress'; statusLabel = done + '/' + total; }
     const created = new Date(t.created_at).toLocaleDateString();
+    const completedStr = t.completed_at ? new Date(t.completed_at).toLocaleDateString() : null;
 
     const linkRow = t.autotask_link
       ? `<a href="${escapeHtml(t.autotask_link)}" target="_blank" rel="noopener" class="tile-link">↗ Open in Autotask</a>`
@@ -527,7 +592,7 @@ function renderBoard() {
               ${linkRow}
               <button class="btn-text" style="padding:0; font-size:11px;" onclick="editLink('${t.id}')">edit</button>
             </div>
-            <div class="tile-meta">Created ${created}</div>
+            <div class="tile-meta">Created ${created}${completedStr ? ' · Completed ' + completedStr : ''}</div>
           </div>
           <span class="status-badge ${statusClass}">${statusLabel}</span>
         </div>

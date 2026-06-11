@@ -315,6 +315,17 @@
   }
   .status-badge.complete { background: var(--success-soft); color: var(--success); }
   .status-badge.progress { background: var(--info-soft); color: var(--info); }
+  .status-badge.archived { background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border); }
+
+  /* Top-of-board action row */
+  .view-actions {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 24px;
+  }
+  .view-count { font-size: 13px; color: var(--text-muted); }
+  .back-link { margin-bottom: 18px; padding-left: 0; }
 
   .approval-banner {
     display: flex; align-items: center; gap: 8px;
@@ -528,13 +539,14 @@
       </div>
     </header>
 
-    <div class="tabs">
-      <button class="tab active" id="tab-form" onclick="switchTab('form')">+ New request</button>
-      <button class="tab" id="tab-board" onclick="switchTab('board')">Dashboard <span class="count" id="tile-count">0</span></button>
+    <div class="view-actions">
+      <button class="btn" id="new-request-btn" onclick="switchTab('form')">+ New request</button>
+      <span class="view-count"><span id="tile-count">0</span> total</span>
     </div>
 
-    <div class="panel active" id="form-panel">
+    <div class="panel" id="form-panel">
       <div class="form-card">
+        <button class="btn-text back-link" onclick="switchTab('board')">← Back to dashboard</button>
         <div class="form-title">Submit order request</div>
         <div class="form-subtitle">Fill in the ticket info and check off which items are needed.</div>
 
@@ -585,15 +597,16 @@
       </div>
     </div>
 
-    <div class="panel" id="board-panel">
+    <div class="panel active" id="board-panel">
       <div class="dashboard-controls">
         <div class="filter-group">
           <button class="filter-btn active" onclick="setFilter('all', event)">All</button>
           <button class="filter-btn" onclick="setFilter('pending', event)">Awaiting approval</button>
           <button class="filter-btn" onclick="setFilter('progress', event)">In progress</button>
           <button class="filter-btn" onclick="setFilter('complete', event)">Complete</button>
+          <button class="filter-btn" onclick="setFilter('archived', event)">Archived</button>
         </div>
-        <input type="text" class="search-box" id="search" placeholder="Search ticket number..." oninput="renderBoard()">
+        <input type="text" class="search-box" id="search" placeholder="Search any ticket, name, date..." oninput="renderBoard()">
       </div>
 
       <div id="empty-state" class="empty">
